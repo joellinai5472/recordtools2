@@ -29,10 +29,7 @@ export const transcribeAudioWithGemini = async (audioBlob: Blob, mimeType: strin
             const isVercel = window.location.hostname.includes('vercel.app');
             const apiPath = isVercel ? "/api/transcribe" : "/.netlify/functions/transcribe";
 
-            const reader = new FileReader();
-            reader.readAsDataURL(audioBlob);
-            await new Promise((resolve) => (reader.onload = resolve));
-            const base64Audio = (reader.result as string).split(',')[1];
+            const base64Audio = await blobToBase64(audioBlob);
 
             const response = await fetch(apiPath, {
                 method: "POST",
