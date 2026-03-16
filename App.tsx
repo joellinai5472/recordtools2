@@ -353,9 +353,8 @@ function App() {
     if (!recordingData?.blob) return;
     if (!isOnline) { setError("請檢查網路連線"); return; }
     if (!aiEnabled || !GLOBAL_TRANSCRIPT_ENABLED) { setError("轉錄功能暫不開放"); return; }
-    setIsAnalyzing(true);
     try {
-      const audio = recordingData.rawBlob || recordingData.blob; const mime = recordingData.rawBlob?.type || "audio/wav";
+      const audio = recordingData.blob; const mime = "audio/wav";
       let result;
       if (new URLSearchParams(window.location.search).get('mock') === 'true') {
         await new Promise(resolve => setTimeout(resolve, 1500));
