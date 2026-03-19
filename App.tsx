@@ -240,15 +240,28 @@ function App() {
   useEffect(() => { localStorage.setItem(AI_STORAGE_KEY, aiEnabled.toString()); }, [aiEnabled]);
   useEffect(() => { if (settings.rememberMe) localStorage.setItem(STORAGE_KEY, settings.userId); else localStorage.removeItem(STORAGE_KEY); }, [settings.userId, settings.rememberMe]);
   useEffect(() => { localStorage.setItem(PREP_NOTES_KEY, JSON.stringify(prepNotes)); }, [prepNotes]);
-  useEffect(() => { if (recordingData?.transcript) localStorage.setItem(TRANSCRIPT_KEY, recordingData.transcript); if (recordingData?.blob && recordingData.blob.size > 0) saveAudioBlob('rec_blob', recordingData.blob); }, [recordingData?.transcript, recordingData?.blob]);
   useEffect(() => {
-    const loadStoredData = async () => {
-      const t = localStorage.getItem(TRANSCRIPT_KEY); const b = await getAudioBlob('rec_blob');
-      if (b) setRecordingData({ blob: b, url: URL.createObjectURL(b), transcript: t || '' });
+    const loadData = async () => {
+      const t = localStorage.getItem(TRANSCRIPT_KEY);
+      const b = await getAudioBlob('rec_blob');
+      const rb = await getAudioBlob('rec_raw_blob');
+      if (b) setRecordingData({ blob: b, rawBlob: rb || undefined, url: URL.createObjectURL(b), transcript: t || '' });
       else if (t) setRecordingData({ blob: new Blob(), url: '', transcript: t });
     };
-    loadStoredData();
+    loadData();
   }, []);
+
+  useEffect(() => {
+    if (recordingData?.transcript) {
+      localStorage.setItem(TRANSCRIPT_KEY, recordingData.transcript);
+    }
+    if (recordingData?.blob && recordingData.blob.size > 0) {
+      saveAudioBlob('rec_blob', recordingData.blob);
+    }
+    if (recordingData?.rawBlob && recordingData.rawBlob.size > 0) {
+      saveAudioBlob('rec_raw_blob', recordingData.rawBlob);
+    }
+  }, [recordingData?.transcript, recordingData?.blob, recordingData?.rawBlob]);
   useEffect(() => {
     const h = (e: BeforeUnloadEvent) => { if (isRecordingRef.current) { e.preventDefault(); e.returnValue = '錄音正在進行中，確定離開嗎？'; return e.returnValue; } };
     window.addEventListener('beforeunload', h); return () => window.removeEventListener('beforeunload', h);
@@ -308,7 +321,11 @@ function App() {
     if (isTestingMic) { if (testMediaRecorderRef.current && testMediaRecorderRef.current.state !== 'inactive') testMediaRecorderRef.current.stop(); setIsTestingMic(false); }
     else {
       setIsTestingMic(true); setTestAudioBlob(null);
-      const mr = new MediaRecorder(streamRef.current); testMediaRecorderRef.current = mr; const chunks: Blob[] = [];
+      // Set bitrate to 64kbps to keep file size small for long recordings (approx 4.8MB per 10 mins)
+      const options = { audioBitsPerSecond: 64000 };
+      const mr = new MediaRecorder(streamRef.current, options);
+      testMediaRecorderRef.current = mr;
+      const chunks: Blob[] = [];
       mr.ondataavailable = (e) => chunks.push(e.data);
       mr.onstop = () => setTestAudioBlob(new Blob(chunks, { type: mr.mimeType }));
       mr.start();
@@ -355,14 +372,27 @@ function App() {
     if (!aiEnabled || !GLOBAL_TRANSCRIPT_ENABLED) { setError("轉錄功能暫不開放"); return; }
     setIsAnalyzing(true);
     try {
-      const audio = recordingData.blob; const mime = "audio/wav";
+      // Use rawBlob (compressed) if available to stay within Netlify's 6MB limit
+      const audio = recordingData.rawBlob || recordingData.blob;
+      if (audio.size === 0) throw new Error("音訊資料為空");
+
+      // Log size for debugging (User can see this in console)
+      console.log(`[分析] 準備傳送音訊: ${audio.type}, 大小: ${Math.round(audio.size / 1024)} KB`);
+      if (audio.size > 4 * 1024 * 1024) {
+        console.warn("[分析] 警告：音訊檔案較大，可能會超過伺服器限制。");
+      }
+
+      // Gemini hates "audio/webm;codecs=opus", it only wants "audio/webm"
+      const mime = (audio.type || "audio/wav").split(';')[0];
+      
       let result;
       if (new URLSearchParams(window.location.search).get('mock') === 'true') {
         await new Promise(resolve => setTimeout(resolve, 1500));
         result = "這是一段測試用的虛擬逐字稿，因為您在網址加入了 mock=true 模式，所以這次測試沒有消耗任何 Gemini 的 API 額度。這段文字可以用來測試後續的 UI 功能。";
       } else {
         result = await transcribeAudioWithGemini(audio, mime);
-      }      setRecordingData({ ...recordingData, transcript: result });
+      }
+      setRecordingData({ ...recordingData, transcript: result });
     } catch (e: any) { setError(`分析失敗: ${e.message}`); }
     finally { setIsAnalyzing(false); }
   };
